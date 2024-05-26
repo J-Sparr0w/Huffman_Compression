@@ -243,9 +243,7 @@ impl<'a> BitReader<'a> {
     }
 
     pub fn is_complete(&self) -> bool {
-        // println!("stream reached at idx: {}", self.idx);
         if self.idx >= self.stream.len() {
-            // println!("end of stream reached at idx: {}", self.idx);
             return true;
         }
         false
@@ -305,25 +303,29 @@ impl<'a> HuffmanDecoder<'a> {
     }
 
     pub fn read_char(&mut self) -> anyhow::Result<Option<char>> {
-        // let mut fn_count = 0;
-
         while !self.reader.is_complete() {
-            // fn_count += 1;
-            // println!("iter count: {}", fn_count);
-
             let bit = match self.reader.next_bit() {
                 Some(b) => b,
                 None => break,
             };
 
-            // println!("before code: {:?}", self.code);
-
             self.code = match self.code {
-                Some(value) => Some(value.push_bit(bit)?),
+                Some(value) => {
+                    let val = match value.push_bit(bit) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            // println!(
+                            //     "\nErrorred at idx: {}, current text: \n\t{}\n\nvalue: {:?}",
+                            //     self.reader.idx, self.text, value
+                            // );
+
+                            BinaryRep::new_bit(bit)
+                        }
+                    };
+                    Some(val)
+                }
                 None => Some(BinaryRep::new_bit(bit)),
             };
-
-            // println!("code: {:b}", self.code.unwrap().value);
 
             match self.map.get(&self.code.unwrap()) {
                 Some(ch) => {
@@ -338,28 +340,22 @@ impl<'a> HuffmanDecoder<'a> {
     }
 
     pub fn read(&mut self) {
-        println!("\nreading stream: {:?}", self.reader.stream);
         while !self.reader.is_complete() {
-            // println!(
-            //     "reading index: {}, item: {:?}",
-            //     self.reader.idx,
-            //     self.reader.stream.get(self.reader.idx)
-            // );
             let ch = match self.read_char() {
                 Ok(Some(c)) => c,
-                Ok(None) | Err(_) => {
-                    println!("breaking at idx: {}", self.reader.idx);
+                Ok(None) => {
+                    break;
+                }
+                Err(_) => {
+                    // println!("breaking due to err at idx: {}", self.reader.idx);
                     break;
                 }
             };
+
             self.text.push(ch);
             self.code = None;
         }
-        println!(
-            "last index: {}, item: {:?}",
-            self.reader.idx,
-            self.reader.stream.get(self.reader.idx)
-        );
+
         println!("\n");
     }
 }
@@ -503,7 +499,7 @@ fn huffman_encode(src: &str) -> Vec<u8> {
     if let Some('\r') = output.chars().last() {
         output.pop().unwrap();
     }
-    println!("stream after encoding: {:?}", bit_writer.stream);
+    // println!("stream after encoding: {:?}", bit_writer.stream);
     output.push_str("~");
     let mut bytes: Vec<u8> = output.bytes().collect();
     bytes.append(&mut bit_writer.stream);
@@ -521,12 +517,7 @@ fn read_first_line(src: &[u8]) -> (usize, u8) {
         idx = i;
         value.push(*ch as char);
     }
-    // println!(
-    //     "idx: {idx}, value:{val}",
-    //     val = value
-    //         .parse::<u8>()
-    //         .expect("coded string is not valid, line[1] could not be parsed")
-    // );
+
     (
         idx + 1,
         value
@@ -552,22 +543,27 @@ fn parse_huffman_table(src: &[u8]) -> HashMap<BinaryRep, char> {
                 // println!("its a newline");
                 line = iter.next().unwrap();
                 char_iter = line.chars();
-                char_iter.next().unwrap()
+                char_iter.next().unwrap();
+                '\n'
             }
         };
+        match character {
+            '\n' => println!("reading: \n"),
+            '\r' => println!("reading: \r"),
+            '\\' => println!("reading: \\"),
+            _ => (),
+        }
+
         let value: String;
         value = char_iter.take_while(|ch| *ch != '~').collect();
-        // println!("[line= `{line}`] value to be parsed: {value}");
         let val = BinaryRep {
             value: u32::from_str_radix(&value, 2)
                 .expect(&format!("value: {} could not be parsed from file", value)),
             len: value.len() as u8,
         };
-        // println!("\t\tparsed value:{:b}", val.value);
 
         map.insert(val, character);
         if line.contains("~") {
-            // println!("gonna return");
             return map;
         }
     }
@@ -591,10 +587,9 @@ fn huffman_decode(src: &[u8]) -> String {
         .skip(1)
         .map(|x| x.unwrap())
         .collect();
-    println!("Stream: {stream:?}");
     let (_, last_byte_len) = read_first_line(src);
     let decode_map: HashMap<BinaryRep, char> = parse_huffman_table(src);
-    // println!("decoded map: {decode_map:?}");
+    println!("decoded map: {decode_map:?}");
     let mut decoder = HuffmanDecoder::with_map(&decode_map, &stream, last_byte_len);
     decoder.read();
     decoder.text
@@ -612,11 +607,13 @@ fn main() {
     let src = std::fs::read_to_string(file_name).unwrap();
     let encoded_src = huffman_encode(&src);
     // println!("encoded string: {:?}", encoded_src);
-    let output_file_path = "encoded.txt";
-    std::fs::write(output_file_path, encoded_src).expect("encoding file failed");
+    let encoded_file_path = "encoded.txt";
+    std::fs::write(encoded_file_path, encoded_src).expect("encoding file failed");
     let encoded = std::fs::read("encoded.txt").unwrap();
     let decoded_src = huffman_decode(&encoded);
-    println!("decoded string: {}", decoded_src);
+
+    let decoded_file_path = "decoded.txt";
+    std::fs::write(decoded_file_path, decoded_src).expect("decoding file failed");
 
     let elapsed = timer.elapsed();
     println!();
